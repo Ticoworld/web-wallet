@@ -6,8 +6,7 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/connect" element={<WalletConnectPage />} />
-        <Route path="/" element={<div>Home Page (Future Web Version)</div>} />
+        <Route path="/" element={<WalletConnectPage />} />
       </Routes>
     </Router>
   );
