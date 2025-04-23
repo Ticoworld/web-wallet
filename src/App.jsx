@@ -7,6 +7,7 @@ function App() {
     <Router>
      <Routes>
         <Route path="/" element={<WalletConnectPage />} />
+        
         <Route path="/connect" element={<WalletConnectPage />} />
       </Routes>
     </Router>
