@@ -22,67 +22,79 @@ function ErrorFallback({ error, resetErrorBoundary }) {
 
 function WalletConnectComponent() {
   const [address, setAddress] = useState(null);
-  const [error, setError]     = useState(null);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(false);
 
-  // 1) Grab and validate all required query params
-  const params           = new URLSearchParams(window.location.search);
-  const callback         = params.get("callback");
-  const chatId           = params.get("chatId");
-  const nonce            = params.get("nonce");
-  const hasTelegramFlow  = !!callback && !!chatId && !!nonce;
+  // Extract and validate Telegram parameters
+  const params = new URLSearchParams(window.location.search);
+  const rawCb = params.get("callback");
+  const { chatId, nonce, isValid } = useMemo(() => {
+    try {
+      const cbUrl = rawCb ? new URL(rawCb) : null;
+      return {
+        chatId: cbUrl?.searchParams.get("chatId"),
+        nonce: cbUrl?.searchParams.get("nonce"),
+        isValid: !!rawCb && !!cbUrl?.searchParams.get("chatId") && !!cbUrl?.searchParams.get("nonce")
+      };
+    } catch {
+      return { chatId: null, nonce: null, isValid: false };
+    }
+  }, [rawCb]);
 
-  // 2) Set up Stacks UserSession
-  const appConfig   = useMemo(() => new AppConfig(["store_write"]), []);
+  // Session management
+  const appConfig = useMemo(() => new AppConfig(["store_write"]), []);
   const userSession = useMemo(() => new UserSession({ appConfig }), [appConfig]);
 
-  // 3) If _no_ Telegram flow and we’re signed in, forcibly sign out & clear storage
+  // Auto-clear invalid sessions
   useEffect(() => {
-    if (!hasTelegramFlow && userSession.isUserSignedIn()) {
+    if (!isValid && userSession.isUserSignedIn()) {
       userSession.signUserOut();
-      setAddress(null);
       window.localStorage.clear();
     }
-  }, [hasTelegramFlow, userSession]);
+  }, [isValid, userSession]);
 
-  // 4) The “Connect” routine
+  // Connection handler
   const connectWallet = useCallback(() => {
-    if (!hasTelegramFlow) {
-      setError(new Error("Invalid or missing connection parameters"));
+    if (!isValid) {
+      setError(new Error("Invalid connection request"));
       return;
     }
 
     showConnect({
       appDetails: {
-        name: "Stacks Mobile Trader",
-        icon: `${window.location.origin}/icon.png`,
+        name: "Stacks Trader Bot",
+        icon: `${window.location.origin}/logo.png`,
       },
       onFinish: async () => {
         try {
-          // Load STX address
-          const userData      = userSession.loadUserData();
-          const stxAddress    = userData.profile.stxAddress.mainnet;
+          const userData = userSession.loadUserData();
+          const stxAddress = userData.profile.stxAddress.mainnet;
 
-          // Blockchain‐side validation
-          const balanceResp = await fetch(
-            `https://api.mainnet.hiro.so/extended/v1/address/${stxAddress}/balances`
+          // Verify on-chain existence
+          const balanceRes = await fetch(
+            `https://api.hiro.so/extended/v1/address/${stxAddress}/balances`
           );
-          if (!balanceResp.ok) {
-            throw new Error("Chain lookup failed");
-          }
+          if (!balanceRes.ok) throw new Error("Address not found on-chain");
 
-          // Notify bot
-          const botResp = await fetch(decodeURIComponent(callback), {
+          // Notify Telegram bot
+          const botResponse = await fetch(decodeURIComponent(rawCb), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ address: stxAddress, chatId, nonce }),
+            body: JSON.stringify({ chatId, nonce, address: stxAddress }),
           });
-          if (!botResp.ok) {
-            throw new Error("Bot callback failed");
-          }
+          
+          if (!botResponse.ok) throw new Error("Bot integration failed");
 
+          // Success state
           setAddress(stxAddress);
+          setSuccess(true);
+          
+          // Auto-redirect to Telegram after 5 seconds
+          setTimeout(() => {
+            window.location.href = `https://t.me/${import.meta.env.VITE_BOT_USERNAME}`;
+          }, 5000);
+
         } catch (err) {
-          console.error(err);
           userSession.signUserOut();
           window.localStorage.clear();
           setError(err);
@@ -95,19 +107,19 @@ function WalletConnectComponent() {
       },
       userSession,
     });
-  }, [callback, chatId, nonce, hasTelegramFlow, userSession]);
+  }, [isValid, rawCb, chatId, nonce, userSession]);
 
-  // 5) Auto-trigger connect only if in Telegram flow and not already signed in
+  // Auto-initiate connection for valid flows
   useEffect(() => {
-    if (hasTelegramFlow && !userSession.isUserSignedIn()) {
+    if (isValid && !userSession.isUserSignedIn()) {
       connectWallet();
     }
-  }, [connectWallet, hasTelegramFlow, userSession]);
+  }, [isValid, userSession, connectWallet]);
 
   return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
       <div className="bg-white shadow rounded-lg p-6 max-w-md w-full text-center">
-        <h1 className="text-2xl font-bold mb-4">Connect Your Stacks Wallet</h1>
+        <h1 className="text-2xl font-bold mb-4">Wallet Connection</h1>
 
         {error && (
           <div className="bg-red-100 text-red-700 p-3 rounded mb-4">
@@ -115,20 +127,27 @@ function WalletConnectComponent() {
           </div>
         )}
 
-        {address ? (
+        {success ? (
           <div className="bg-green-100 text-green-700 p-3 rounded mb-4">
-            <p>
-              ✅ Connected! Address:{" "}
-              <span className="font-mono break-all">{address}</span>
+            <p className="font-mono break-all mb-2">{address}</p>
+            <p className="mb-4">✅ Successfully connected!</p>
+            <a
+              href={`https://t.me/${import.meta.env.VITE_BOT_USERNAME}`}
+              className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Return to Telegram
+            </a>
+            <p className="mt-2 text-sm text-gray-600">
+              Auto-redirecting in 5 seconds...
             </p>
-            <p className="mt-2">Return to Telegram to continue your session.</p>
           </div>
         ) : (
           <button
             onClick={connectWallet}
-            className="w-full bg-blue-600 text-white py-2 rounded mb-4 hover:bg-blue-700 transition"
+            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
+            disabled={!isValid}
           >
-            Connect with Xverse / Leather
+            {isValid ? "Connect Wallet" : "Invalid Connection Link"}
           </button>
         )}
       </div>
