@@ -3,7 +3,6 @@
 import React, { useEffect } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useAppKit } from '@reown/appkit/react';
-import { escapeMarkdown } from '../utils/markdown';
 
 function ErrorFallback({ error, resetErrorBoundary }) {
   return (
