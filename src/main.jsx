@@ -6,28 +6,35 @@ import { createAppKit } from '@reown/appkit/react';
 import { BitcoinAdapter } from '@reown/appkit-adapter-bitcoin';
 import { bitcoin } from '@reown/appkit/networks';
 
+// Load project ID from environment variables
 const projectId = import.meta.env.VITE_PROJECT_ID;
 
 if (!projectId) {
   throw new Error('VITE_PROJECT_ID is not defined in .env');
 }
 
+// Dynamic metadata based on current origin
+const rootUrl = window.location.origin;
 const metadata = {
   name: 'Stacks Mobile Trader',
   description: 'Secure Stacks Trading',
-  url: window.location.origin,
-  icons: [`${window.location.origin}/icon.png`],
+  url: rootUrl,
+  icons: [`${rootUrl}/icon.png`],
 };
 
-const bitcoinAdapter = new BitcoinAdapter({ projectId });
+// Configure Bitcoin Adapter
+const bitcoinAdapter = new BitcoinAdapter({
+  projectId,
+});
 
+// Initialize AppKit with Bitcoin network and adapter
 createAppKit({
   adapters: [bitcoinAdapter],
   networks: [bitcoin],
   metadata,
   projectId,
   features: {
-    analytics: true,
+    analytics: true, // Optional, defaults to Cloud configuration
     email: false,
     socials: [],
   },
