@@ -5,8 +5,9 @@ function App() {
 
   return (
     <Router>
-      <Routes>
+     <Routes>
         <Route path="/" element={<WalletConnectPage />} />
+        <Route path="/connect" element={<WalletConnectPage />} />
       </Routes>
     </Router>
   );
