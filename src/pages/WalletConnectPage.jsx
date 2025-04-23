@@ -24,92 +24,98 @@ function WalletConnectComponent() {
   const [address, setAddress] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // Extract and validate Telegram parameters
-  const params = new URLSearchParams(window.location.search);
-  const rawCb = params.get("callback");
-  const { chatId, nonce, isValid } = useMemo(() => {
+  // Validate Telegram parameters
+  const { rawCb, chatId, nonce, isValid } = useMemo(() => {
     try {
-      const cbUrl = rawCb ? new URL(rawCb) : null;
+      const params = new URLSearchParams(window.location.search);
+      const cb = params.get("callback");
+      if (!cb) return { isValid: false };
+      
+      const cbUrl = new URL(cb);
       return {
-        chatId: cbUrl?.searchParams.get("chatId"),
-        nonce: cbUrl?.searchParams.get("nonce"),
-        isValid: !!rawCb && !!cbUrl?.searchParams.get("chatId") && !!cbUrl?.searchParams.get("nonce")
+        rawCb: cb,
+        chatId: cbUrl.searchParams.get("chatId"),
+        nonce: cbUrl.searchParams.get("nonce"),
+        isValid: true
       };
-    } catch {
-      return { chatId: null, nonce: null, isValid: false };
+    } catch (err) {
+      console.error("Invalid callback URL:", err);
+      return { isValid: false };
     }
-  }, [rawCb]);
+  }, []);
 
   // Session management
-  const appConfig = useMemo(() => new AppConfig(["store_write"]), []);
-  const userSession = useMemo(() => new UserSession({ appConfig }), [appConfig]);
-
-  // Auto-clear invalid sessions
-  useEffect(() => {
-    if (!isValid && userSession.isUserSignedIn()) {
-      userSession.signUserOut();
-      window.localStorage.clear();
-    }
-  }, [isValid, userSession]);
+  const userSession = useMemo(() => {
+    return new UserSession({ appConfig: new AppConfig(["store_write"]) });
+  }, []);
 
   // Connection handler
-  const connectWallet = useCallback(() => {
-    if (!isValid) {
-      setError(new Error("Invalid connection request"));
-      return;
+  const connectWallet = useCallback(async () => {
+    if (!isValid || loading) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Show wallet connection modal
+      await new Promise((resolve, reject) => {
+        showConnect({
+          appDetails: {
+            name: "Stacks Trader Bot",
+            icon: `${window.location.origin}/logo.png`,
+          },
+          onFinish: async () => {
+            try {
+              const userData = userSession.loadUserData();
+              const stxAddress = userData.profile.stxAddress.mainnet;
+
+              // Verify address
+              const balanceRes = await fetch(
+                `https://api.hiro.so/extended/v1/address/${stxAddress}/balances`
+              );
+              if (!balanceRes.ok) throw new Error("Address verification failed");
+
+              // Notify bot
+              const botRes = await fetch(decodeURIComponent(rawCb), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatId, nonce, address: stxAddress }),
+              });
+              if (!botRes.ok) throw new Error("Bot notification failed");
+
+              // Update state
+              setAddress(stxAddress);
+              setSuccess(true);
+              
+              // Redirect to Telegram
+              setTimeout(() => {
+                window.location.href = `https://t.me/${import.meta.env.VITE_BOT_USERNAME}`;
+              }, 3000);
+
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          },
+          onCancel: () => {
+            userSession.signUserOut();
+            reject(new Error("Connection cancelled"));
+          },
+          userSession,
+        });
+      });
+    } catch (err) {
+      console.error("Connection error:", err);
+      setError(err);
+      userSession.signUserOut();
+    } finally {
+      setLoading(false);
     }
+  }, [isValid, rawCb, chatId, nonce, userSession, loading]);
 
-    showConnect({
-      appDetails: {
-        name: "Stacks Trader Bot",
-        icon: `${window.location.origin}/logo.png`,
-      },
-      onFinish: async () => {
-        try {
-          const userData = userSession.loadUserData();
-          const stxAddress = userData.profile.stxAddress.mainnet;
-
-          // Verify on-chain existence
-          const balanceRes = await fetch(
-            `https://api.hiro.so/extended/v1/address/${stxAddress}/balances`
-          );
-          if (!balanceRes.ok) throw new Error("Address not found on-chain");
-
-          // Notify Telegram bot
-          const botResponse = await fetch(decodeURIComponent(rawCb), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chatId, nonce, address: stxAddress }),
-          });
-          
-          if (!botResponse.ok) throw new Error("Bot integration failed");
-
-          // Success state
-          setAddress(stxAddress);
-          setSuccess(true);
-          
-          // Auto-redirect to Telegram after 5 seconds
-          setTimeout(() => {
-            window.location.href = `https://t.me/${import.meta.env.VITE_BOT_USERNAME}`;
-          }, 5000);
-
-        } catch (err) {
-          userSession.signUserOut();
-          window.localStorage.clear();
-          setError(err);
-        }
-      },
-      onCancel: () => {
-        userSession.signUserOut();
-        window.localStorage.clear();
-        setAddress(null);
-      },
-      userSession,
-    });
-  }, [isValid, rawCb, chatId, nonce, userSession]);
-
-  // Auto-initiate connection for valid flows
+  // Auto-initiate connection
   useEffect(() => {
     if (isValid && !userSession.isUserSignedIn()) {
       connectWallet();
@@ -123,31 +129,28 @@ function WalletConnectComponent() {
 
         {error && (
           <div className="bg-red-100 text-red-700 p-3 rounded mb-4">
-            {error.message}
+            {error.message.includes("fetch") ? "Network error - check connection" : error.message}
           </div>
         )}
 
         {success ? (
           <div className="bg-green-100 text-green-700 p-3 rounded mb-4">
             <p className="font-mono break-all mb-2">{address}</p>
-            <p className="mb-4">✅ Successfully connected!</p>
+            <p className="mb-4">✅ Connection successful!</p>
             <a
               href={`https://t.me/${import.meta.env.VITE_BOT_USERNAME}`}
               className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
             >
               Return to Telegram
             </a>
-            <p className="mt-2 text-sm text-gray-600">
-              Auto-redirecting in 5 seconds...
-            </p>
           </div>
         ) : (
           <button
             onClick={connectWallet}
-            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
-            disabled={!isValid}
+            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition disabled:opacity-50"
+            disabled={!isValid || loading}
           >
-            {isValid ? "Connect Wallet" : "Invalid Connection Link"}
+            {loading ? "Connecting..." : "Connect Wallet"}
           </button>
         )}
       </div>
