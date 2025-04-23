@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { showConnect } from '@stacks/connect';
-import { AppConfig, UserSession } from '@stacks/auth';
-import { ErrorBoundary } from 'react-error-boundary';
+import React, { useState, useEffect } from "react";
+import { showConnect } from "@stacks/connect";
+import { AppConfig, UserSession } from "@stacks/auth";
+import { ErrorBoundary } from "react-error-boundary";
 
 // Error fallback component
 function ErrorFallback({ error, resetErrorBoundary }) {
@@ -24,13 +24,13 @@ function WalletConnectComponent() {
   const [address, setAddress] = useState(null);
   const [error, setError] = useState(null);
 
-  const appConfig = new AppConfig(['store_write', 'publish_data']);
+  const appConfig = new AppConfig(["store_write", "publish_data"]);
   const userSession = new UserSession({ appConfig });
 
   const connectWallet = () => {
     showConnect({
       appDetails: {
-        name: 'Stacks Mobile Trader',
+        name: "Stacks Mobile Trader",
         icon: `${window.location.origin}/icon.png`,
       },
       onFinish: async () => {
@@ -40,22 +40,31 @@ function WalletConnectComponent() {
           setAddress(stacksAddress);
 
           // Send address back to bot
-          const callback = new URLSearchParams(window.location.search).get('callback');
+          const callback = new URLSearchParams(window.location.search).get(
+            "callback"
+          );
           if (callback) {
+            // In the connection handler
             const response = await fetch(decodeURIComponent(callback), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ address: stacksAddress }),
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                address: stacksAddress,
+                nonce: new URLSearchParams(window.location.search).get("nonce"),
+                chatId: new URLSearchParams(window.location.search).get(
+                  "chatId"
+                ),
+              }),
             });
-            if (!response.ok) throw new Error('Failed to notify the bot');
+            if (!response.ok) throw new Error("Failed to notify the bot");
           }
         } catch (err) {
-          setError(new Error('Connection failed. Please try again.'));
-          console.error('Callback error:', err);
+          setError(new Error("Connection failed. Please try again."));
+          console.error("Callback error:", err);
         }
       },
       onCancel: () => {
-        setError(new Error('Connection cancelled by user'));
+        setError(new Error("Connection cancelled by user"));
       },
       userSession,
     });
@@ -84,7 +93,7 @@ function WalletConnectComponent() {
         {address ? (
           <div className="bg-green-100 text-green-700 p-3 rounded mb-4">
             <p>
-              ✅ Connected! Address:{' '}
+              ✅ Connected! Address:{" "}
               <span className="font-mono break-all">{address}</span>
             </p>
             <p className="mt-2">You can now return to Telegram.</p>
