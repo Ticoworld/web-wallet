@@ -24,6 +24,9 @@ function ErrorFallback({ error, resetErrorBoundary }) {
   );
 }
 
+console.log(`https://t.me/${import.meta.env.VITE_BOT_USERNAME}`);
+
+
 function WalletConnectComponent() {
   const [address, setAddress] = useState(null);
   const [error, setError] = useState(null);
@@ -76,7 +79,6 @@ function WalletConnectComponent() {
               const userData = userSession.loadUserData();
               const stxAddress = userData.profile.stxAddress.mainnet;
               console.log("Extracted STX Address:", stxAddress);
-              console.log("userdata:", userData);
 
 
               if (!/^SP[a-zA-Z0-9]{39}$/.test(stxAddress)) {
@@ -89,9 +91,12 @@ function WalletConnectComponent() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chatId, nonce, address: stxAddress }),
               });
-
+              
               if (!response.ok) {
                 const errorData = await response.json();
+                if (response.status === 401 && errorData.error === "Connection request expired") {
+                  throw new Error("This connection link has expired. Please generate a new one from Telegram.");
+                }
                 throw new Error(errorData.error || "Connection failed");
               }
 
