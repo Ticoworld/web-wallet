@@ -75,8 +75,12 @@ function WalletConnectComponent() {
             try {
               const userData = userSession.loadUserData();
               const stxAddress = userData.profile.stxAddress.mainnet;
+              console.log("Extracted STX Address:", stxAddress);
+              console.log("userdata:", userData);
 
-              if (!/^SP[a-zA-Z0-9]{38}$/.test(stxAddress)) {
+
+              if (!/^SP[a-zA-Z0-9]{39}$/.test(stxAddress)) {
+                console.error("Invalid Address Format: Expected format SPXXXXX... (38 characters)");
                 throw new Error("Invalid Stacks address format");
               }
 
