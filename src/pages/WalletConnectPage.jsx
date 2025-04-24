@@ -24,7 +24,6 @@ function ErrorFallback({ error, resetErrorBoundary }) {
   );
 }
 
-console.log(`https://t.me/${import.meta.env.VITE_BOT_USERNAME}`);
 
 
 function WalletConnectComponent() {
@@ -109,7 +108,7 @@ function WalletConnectComponent() {
                 setCountdown(prev => {
                   if (prev <= 1) {
                     clearInterval(interval);
-                    window.location.href = `https://t.me/${import.meta.env.VITE_BOT_USERNAME}`;
+                    window.location.replace = `https://t.me/${import.meta.env.VITE_BOT_USERNAME}`;
                     return 0;
                   }
                   return prev - 1;
