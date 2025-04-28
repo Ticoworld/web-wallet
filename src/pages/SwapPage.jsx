@@ -42,7 +42,7 @@ export default function SwapPage() {
         });
         setLoading(true);
         try {
-          const q = await alex.getSwapQuote(
+          const q = await alex.getAmountTo(
             Currency[params.from],
             Currency[params.to],
             params.amount
@@ -206,7 +206,7 @@ export default function SwapPage() {
           });
           setLoading(true);
           try {
-            const q = await alex.getSwapQuote(
+            const q = await alex.getAmountTo(
               Currency[swapParams.from],
               Currency[swapParams.to],
               swapParams.amount
