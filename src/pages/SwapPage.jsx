@@ -98,13 +98,15 @@ function SwapPage() {
         const fee = params.fee; // Use pre-calculated fee
         
         // Get token decimals
-        const [fromDecimals, toDecimals] = await Promise.all([
-          alex.getDecimals(fromCur).catch(() => 6),
-          alex.getDecimals(toCur).catch(() => 6)
+        const [fromInfo, toInfo] = await Promise.all([
+          alex.fetchTokenInfo(fromCur.address).catch(() => ({ decimals: 6 })),
+          alex.fetchTokenInfo(toCur.address).catch(() => ({ decimals: 6 }))
         ]);
-
+        
+        const fromDecimals = fromInfo.decimals ?? 6;
+        const toDecimals = toInfo.decimals ?? 6;
         // Convert to blockchain units
-        const amountBase = BigInt(swapAmount * 10 ** fromDecimals);
+        const amountBase = BigInt(Math.floor(swapAmount * 10 ** fromDecimals));
         
         // Get best route
         setStatus('Finding optimal trading route…');
