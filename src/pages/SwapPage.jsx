@@ -1,17 +1,14 @@
-// src/pages/SwapPage.jsx
-
 import React, { useEffect, useState } from 'react';
-import { request } from '@stacks/connect';
 import { AlexSDK, Currency } from 'alex-sdk';
 import { ErrorBoundary } from 'react-error-boundary';
 
 function SwapErrorFallback({ error, resetErrorBoundary }) {
   return (
     <div className="p-6 text-center">
-      <h2 className="text-xl font-bold text-red-600 mb-4">Error</h2>
+      <h2 className="text-xl font-bold text-red-600 mb-4">Swap Error</h2>
       <p className="mb-4">{error.message}</p>
-      <button onClick={resetErrorBoundary} className="px-4 py-2 bg-gray-200 rounded">
-        Retry
+      <button onClick={resetErrorBoundary} className="px-4 py-2 bg-blue-600 text-white rounded">
+        Retry Swap
       </button>
     </div>
   );
@@ -19,132 +16,188 @@ function SwapErrorFallback({ error, resetErrorBoundary }) {
 
 function SwapPage() {
   const [status, setStatus] = useState('Initializing swap…');
-  const [error,  setError]  = useState(null);
+  const [error, setError] = useState(null);
   const [params, setParams] = useState(null);
-  const [tg,     setTg]     = useState(null);
+  const [tg, setTg] = useState(null);
 
-  // 1) Parse & validate URL params
+  // 1. Parameter Parsing & Validation
   useEffect(() => {
     if (!window.Telegram?.WebApp) {
-      return setError(new Error('Open this only via Telegram WebApp.'));
+      setError(new Error('Please open through Telegram bot interface'));
+      return;
     }
-    window.Telegram.WebApp.ready();
-    setTg(window.Telegram.WebApp);
+
+    const webApp = window.Telegram.WebApp;
+    webApp.ready();
+    setTg(webApp);
 
     try {
-      const sp = new URLSearchParams(window.location.search);
-      const get = k => {
-        const v = sp.get(k);
-        if (!v) throw new Error(`Missing ${k}`);
-        return v;
+      // Debug: Log raw URL parameters
+      console.debug('Raw URL Params:', new URLSearchParams(window.location.search).toString());
+
+      const searchParams = new URLSearchParams(window.location.search);
+      if (!searchParams) throw new Error('Invalid URL parameters');
+
+      const getRequiredParam = (name) => {
+        const value = searchParams.get(name);
+        const decoded = value ? decodeURIComponent(value) : '';
+        if (!decoded.trim()) throw new Error(`Missing ${name} parameter`);
+        return decoded;
       };
 
-      const p = {
-        chatId:   get('chatId'),
-        nonce:    get('nonce'),
-        from:     get('from').toUpperCase(),
-        to:       get('to').toUpperCase(),
-        amount:   Number(get('amount')),
-        slippage: Number(sp.get('slippage') || 1),
+      const parsed = {
+        chatId: getRequiredParam('chatId'),
+        nonce: getRequiredParam('nonce'),
+        from: getRequiredParam('from').toUpperCase().trim(),
+        to: getRequiredParam('to').toUpperCase().trim(),
+        amount: Number(getRequiredParam('amount')),
+        slippage: Number(searchParams.get('slippage') || 1),
+        address: decodeURIComponent(getRequiredParam('address')),
+        fee: Number(searchParams.get('fee')),
+        feeAddress: decodeURIComponent(getRequiredParam('feeAddress')),
       };
-      if (p.from === p.to) throw new Error('FROM and TO cannot match');
-      if (isNaN(p.amount) || p.amount <= 0) throw new Error('Invalid amount');
-      if (isNaN(p.slippage) || p.slippage < 0 || p.slippage > 50) {
-        throw new Error('Slippage must be 0–50%');
+
+      // Post-Validation
+      if (parsed.from === parsed.to) throw new Error('Cannot swap identical tokens');
+      if (isNaN(parsed.amount) || parsed.amount <= 0) throw new Error('Invalid swap amount');
+      if (isNaN(parsed.slippage) || parsed.slippage < 0 || parsed.slippage > 50) {
+        throw new Error('Slippage must be between 0-50%');
       }
-      setParams(p);
+      // After parameter parsing
+  if (parsed.feeAddress !== import.meta.env.VITE_FEE_WALLET) {
+  throw new Error('Invalid fee address detected');
+}
+      setParams(parsed);
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
+      setError(e instanceof Error ? e : new Error(e.message || 'Invalid swap parameters'));
     }
   }, []);
 
-  // 2) Core swap logic
+  // 2. Core Swap Execution
   useEffect(() => {
     if (!tg || !params || error) return;
 
     (async () => {
       try {
-        setStatus('Building quote & tx…');
+        setStatus('Initializing swap protocol…');
+        
         const alex = new AlexSDK({
-          apiUrl:  import.meta.env.VITE_ALEX_API_URL,
+          apiUrl: import.meta.env.VITE_ALEX_API_URL,
           network: import.meta.env.VITE_STACKS_NETWORK,
         });
+
+        // Validate supported tokens
         const fromCur = Currency[params.from];
-        const toCur   = Currency[params.to];
-        if (!fromCur || !toCur) throw new Error('Unsupported tokens');
-
-        // Route
-        const route = await alex.getRoute(fromCur, toCur);
-        if (!route) throw new Error('No liquidity pool');
-
-        // Decimals
-        const infoF = await alex.fetchTokenInfo(fromCur.address);
-        const infoT = await alex.fetchTokenInfo(toCur.address);
-        const dF = infoF.decimals ?? 6;
-        const dT = infoT.decimals ?? 6;
-
-        // Quote
-        const baseAmt = BigInt(Math.floor(params.amount * 10**dF));
-        const recvBig = await alex.getAmountTo(fromCur, baseAmt, toCur, route);
-        const expected = Number(recvBig) / 10**dT;
-        setStatus(`Quote: ~${expected.toFixed(6)} ${params.to}`);
-
-        // Build sponsored TX
-        const minGot = BigInt(
-          Math.floor(expected * (1 - params.slippage/100) * 10**dT)
-        );
-        const tx = await alex.runSwapForSponsoredTx(
-          tg.initDataUnsafe.user.id,
-          fromCur, toCur,
-          baseAmt, minGot,
-          route
-        );
-
-        // Broadcast
-        setStatus('Broadcasting swap…');
-        if (await alex.isSponsoredTxServiceAvailable()) {
-          const txid = await alex.broadcastSponsoredTx(tx);
-          tg.sendData(JSON.stringify({ type:'swap', txid, nonce:params.nonce }));
-          setStatus(`✅ Swap sent. TXID: ${txid}`);
-        } else {
-          const signed = await request('transaction', tx);
-          const hex = signed.serialize().toString('hex');
-          tg.sendData(JSON.stringify({ type:'swap', signedTx:hex, nonce:params.nonce }));
-          setStatus('✅ Swap signed, returning to bot…');
+        const toCur = Currency[params.to];
+        if (!fromCur || !toCur) {
+          throw new Error(`Unsupported token pair: ${params.from}/${params.to}`);
         }
 
+        // Calculate with fee (1%)
+        const swapAmount = params.amount; // Already net amount from backend
+        const fee = params.fee; // Use pre-calculated fee
+        
+        // Get token decimals
+        const [fromDecimals, toDecimals] = await Promise.all([
+          alex.getDecimals(fromCur).catch(() => 6),
+          alex.getDecimals(toCur).catch(() => 6)
+        ]);
+
+        // Convert to blockchain units
+        const amountBase = BigInt(swapAmount * 10 ** fromDecimals);
+        
+        // Get best route
+        setStatus('Finding optimal trading route…');
+        const route = await alex.getRoute(fromCur, toCur);
+        if (!route) throw new Error('No liquidity pool available');
+
+        // Calculate expected output
+        const recvBase = await alex.getAmountTo(fromCur, amountBase, toCur, route);
+        const expected = Number(recvBase) / 10 ** toDecimals;
+        
+        // Build transaction
+        setStatus('Constructing secure transaction…');
+        const minReceived = BigInt(
+          Math.floor(expected * (1 - params.slippage/100) * 10 ** toDecimals)
+        );
+
+        const tx = await alex.runSwapForSponsoredTx(
+          params.address,
+          fromCur,
+          toCur,
+          BigInt(swapAmount * 10 ** fromDecimals), // Net amount
+          minReceived,
+          route,
+          {
+            feeAddress: params.feeAddress, // From URL params
+            feeAmount: BigInt(params.fee * 10 ** fromDecimals) // Pre-calculated fee
+          }
+        );
+
+        // Broadcast transaction
+        setStatus('Finalizing swap…');
+        const txId = await alex.broadcastSponsoredTx(tx);
+        
+        tg.sendData(JSON.stringify({
+          type: 'swap',
+          txId,
+          nonce: params.nonce,
+          fee: fee.toFixed(4)
+        }));
+
+        tg.close();
+
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setError(new Error(msg));
-        tg.showAlert(`❌ ${msg}`);
+        const message = e instanceof Error ? e.message : 'Swap execution failed';
+        setError(new Error(message));
+        tg.showAlert(`❌ ${message}`);
       }
     })();
   }, [tg, params, error]);
 
-  // 3) Render
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="bg-red-50 text-red-800 p-6 rounded-lg">
-          <h2 className="text-xl font-semibold mb-2">Swap Error</h2>
+        <div className="bg-red-50 text-red-700 p-6 rounded-lg max-w-md">
+          <h2 className="text-xl font-bold mb-2">Swap Failed</h2>
           <p className="mb-4">{error.message}</p>
-          <button onClick={()=>window.location.reload()} className="px-4 py-2 bg-gray-200 rounded">
-            Retry
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Retry Swap
           </button>
         </div>
       </div>
     );
   }
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
-      <p className="text-lg text-center">{status}</p>
+      <div className="text-center space-y-4">
+        <div className="animate-pulse text-4xl">⏳</div>
+        <h2 className="text-xl font-semibold text-gray-800">{status}</h2>
+        {params && (
+          <p className="text-gray-600">
+            Swapping {params.amount.toFixed(4)} {params.from}
+            <br />
+            <span className="text-sm text-gray-500">
+              (Includes 1% protocol fee: {params.fee.toFixed(4)
+              } {params.from})
+            </span>
+          </p>
+        )}
+      </div>
     </div>
   );
 }
 
 export default function WrappedSwapPage() {
   return (
-    <ErrorBoundary FallbackComponent={SwapErrorFallback} onReset={() => window.location.reload()}>
+    <ErrorBoundary
+      FallbackComponent={SwapErrorFallback}
+      onReset={() => window.location.reload()}
+    >
       <SwapPage />
     </ErrorBoundary>
   );
