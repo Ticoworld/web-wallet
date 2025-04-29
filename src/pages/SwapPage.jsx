@@ -1,7 +1,7 @@
 // src/pages/SwapPage.jsx
 
 import React, { useEffect, useState } from 'react';
-import { showConnect, request } from '@stacks/connect';
+import { request } from '@stacks/connect';
 import { AlexSDK, Currency } from 'alex-sdk';
 import { ErrorBoundary } from 'react-error-boundary';
 
@@ -22,10 +22,10 @@ function SwapPage() {
   const [params, setParams] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  // On mount: init Telegram WebApp & parse URL params
+  // 1. Initialize Telegram WebApp & parse URL params once
   useEffect(() => {
     if (!window.Telegram?.WebApp) {
-      alert('This page must be opened inside the Telegram WebApp.');
+      alert('Please open this via the Telegram bot WebApp.');
       return;
     }
     window.Telegram.WebApp.ready();
@@ -40,97 +40,70 @@ function SwapPage() {
       amount:   Number(p.amount),
       slippage: p.slippage ? Number(p.slippage) : 1,
     };
-    // validate presence
     if (!parsed.chatId || !parsed.nonce || !parsed.from || !parsed.to || !parsed.amount) {
-      throw new Error('Missing required swap parameters.');
+      throw new Error('Missing swap parameters');
     }
     setParams(parsed);
   }, []);
 
-  // Main effect: run once we have params & tg
- //// filepath: src/pages/SwapPage.jsx
+  
 useEffect(() => {
   if (!tg || !params) return;
 
   (async () => {
     setLoading(true);
     try {
-      // 1) Connect wallet once
-      await new Promise((res, rej) => {
-        showConnect({
-          appDetails: {
-            name: 'Stacks Trader Bot',
-            icon: `${window.location.origin}/logo.png`,
-          },
-          onFinish: res,
-          onCancel: () => rej(new Error('Wallet connection canceled')),
-          onError: rej,
-        });
-      });
-
-      // 2) Setup Alex SDK
+      // Setup Alex SDK
       const alex = new AlexSDK({
         apiUrl: import.meta.env.VITE_ALEX_API_URL,
         network: import.meta.env.VITE_STACKS_NETWORK,
       });
       const fromCur = Currency[params.from];
       const toCur = Currency[params.to];
-      if (!fromCur || !toCur) {
-        throw new Error('Unsupported token pair.');
-      }
+      if (!fromCur || !toCur) throw new Error('Unsupported tokens');
 
-      // 3) Fetch route
+      // Fetch best route
       const route = await alex.getRoute(fromCur, toCur);
-      if (!route) {
-        throw new Error(`No liquidity pool for ${params.from} → ${params.to}`);
-      }
+      if (!route) throw new Error(`No liquidity pool for ${params.from}→${params.to}`);
 
-      // 4) Handle decimals
-      const dFrom = await alex.getDecimals(fromCur);
-      const dTo = await alex.getDecimals(toCur);
+      // Get decimals
+      const infoFrom = await alex.fetchTokenInfo(fromCur.address);
+      const dFrom = infoFrom?.decimals ?? 6;
+      const infoTo = await alex.fetchTokenInfo(toCur.address);
+      const dTo = infoTo?.decimals ?? 6;
+
+      // Compute amounts in base units
       const amtBig = BigInt(Math.floor(params.amount * 10 ** dFrom));
-
-      // 5) Calculate expected receive
       const recvBig = await alex.getAmountTo(fromCur, amtBig, toCur, route);
       const expected = Number(recvBig) / 10 ** dTo;
-
-      // 6) Prepare slippage floor
       const minGotBig = BigInt(
         Math.floor(expected * (1 - params.slippage / 100) * 10 ** dTo)
       );
 
-      // 7) Build sponsored swap tx
+      // Build sponsored swap tx
       const sponsoredTx = await alex.runSwapForSponsoredTx(
         tg.initDataUnsafe.user.id,
-        fromCur,
-        toCur,
-        amtBig,
-        minGotBig,
+        fromCur, toCur,
+        amtBig, minGotBig,
         route
       );
 
-      // 8) Broadcast via sponsor if available
+      // Broadcast: prefer sponsor service
       if (await alex.isSponsoredTxServiceAvailable()) {
         const txid = await alex.broadcastSponsoredTx(sponsoredTx);
-        // Send back txid
-        tg.sendData(
-          JSON.stringify({
-            type: 'swap',
-            txid,
-            nonce: params.nonce,
-          })
-        );
+        tg.sendData(JSON.stringify({
+          type: 'swap',
+          txid,
+          nonce: params.nonce,
+        }));
       } else {
         // Fallback: have user sign & broadcast
         const signed = await request('transaction', sponsoredTx);
-        const hex = signed.serialize().toString('hex');
-        tg.sendData(
-          JSON.stringify({
-            type: 'swap',
-            signedTx: hex,
-            nonce: params.nonce,
-          })
-        );
+        tg.sendData(JSON.stringify({
+          type: 'swap',
+          signedTx: signed.serialize().toString('hex'),
+          nonce: params.nonce,
+        }));
       }
     } finally {
       setLoading(false);
@@ -138,13 +111,13 @@ useEffect(() => {
   })();
 }, [tg, params]);
 
-  // Loading view
+  // 3. Loading state UI
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="text-center">
         {loading
-          ? <p className="text-lg">Connecting & swapping…</p>
-          : <p className="text-lg">Initializing…</p>
+          ? <p className="text-lg">Signing & submitting your swap…</p>
+          : <p className="text-lg">Initializing swap…</p>
         }
       </div>
     </div>
